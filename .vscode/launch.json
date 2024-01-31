@@ -5,7 +5,7 @@
       "name": "(gdb) Launch",
       "type": "cppdbg",
       "request": "launch",
-      "program": "main",
+      "program": "${fileDirname}/src/out",
       "args": [],
       "stopAtEntry": false,
       "cwd": "${fileDirname}",

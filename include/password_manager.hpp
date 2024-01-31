@@ -3,11 +3,26 @@
 
 #include "common.hpp"
 
+const int DEFAULT_PASSWORD_LENGTH = 10;
+
+typedef struct password_policy password_policy;
+
+struct password_policy
+{
+    int password_length;
+    int upperCase;
+    int lowerCase;
+    int numericCase;
+    int specialCase;
+
+    password_policy() : password_length(DEFAULT_PASSWORD_LENGTH), upperCase(1), lowerCase(1), numericCase(1), specialCase(1)
+    {
+    }
+};
+
 class PasswordManager
 {
 private:
-    const int DEFAULT_PASSWORD_LENGTH = 10;
-
     const std::string UPPERCASE_REGEX_PATTERN = "[A-Z]+";
     const std::string LOWERCASE_REGEX_PETTERN = "[a-z]+";
     const std::string NUMERIC_CASE_REGEX_PATTERN = "[0-9]+";
@@ -51,6 +66,7 @@ private:
 
         return result;
     }
+   
     bool isSpecailCharExist(const std::string &password)
     {
         std::regex special_char_expression(SPECIAL_CHAR_REGEX_PATTERN);
@@ -69,7 +85,7 @@ private:
     }
 
 public:
-    bool isValid(const std::string &password, const password_policy &policy)
+    bool validate(const std::string &password, const password_policy &policy)
     {
         if (!isValidSize(password, policy.password_length))
             return false;
@@ -83,13 +99,15 @@ public:
             return false;
         return true;
     }
-    bool isValid(const std::string &password)
+    
+    bool validate(const std::string &password)
     {
         return isValidSize(password, DEFAULT_PASSWORD_LENGTH) &&
                isUpperCaseExist(password) && isLowerCaseExist(password) &&
                isNumericCaseExist(password) && isSpecailCharExist(password);
     }
-    bool isValid(const std::string &password, const std::string &policy_file_path);
+    
+    bool validate(const std::string &password, const std::string &policy_file_path);
 };
 
 #endif

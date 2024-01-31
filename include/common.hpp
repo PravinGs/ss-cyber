@@ -11,20 +11,21 @@
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/buffer.h>
+#include <openssl/rsa.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
 
-typedef struct password_policy password_policy;
-
-struct password_policy
+enum class Hash
 {
-    int password_length;
-    int upperCase;
-    int lowerCase;
-    int numericCase;
-    int specialCase;
-
-    password_policy() : password_length(10), upperCase(1), lowerCase(1), numericCase(1), specialCase(1)
-    {
-    }
+    SHA1,
+    SHA224,
+    SHA256,
+    SHA384,
+    SHA512,
+    SHA3_224,
+    SHA3_256,
+    SHA3_384,
+    SHA3_512
 };
 
 #endif
