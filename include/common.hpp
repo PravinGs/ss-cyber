@@ -2,7 +2,13 @@
 #define COMMON_HPP
 #include <iostream>
 #include <string>
+#include <cstring>
+#include <unistd.h>
 #include <regex>
+#include <future>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
