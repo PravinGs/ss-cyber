@@ -3,7 +3,6 @@
 #include <iostream>
 #include <string>
 #include <cstring>
-#include <unistd.h>
 #include <regex>
 #include <future>
 #include <queue>
@@ -12,6 +11,11 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+
+#ifdef _WIN32
+#include <Windows.h>
+#else
+#include <unistd.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
 #include <openssl/bio.h>
@@ -20,6 +24,7 @@
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
+#endif
 
 enum class Hash
 {

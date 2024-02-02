@@ -8,7 +8,6 @@
 #define LOG(logger, message, level) logger.log(message, level, __FILE__, __LINE__, __FUNCTION__)
 #define LOG2(logger, logModel) logger.log(logModel, __FILE__, __LINE__, __FUNCTION__)
 
-
 typedef struct LogModel LogModel;
 
 enum class TimeFormat
@@ -55,16 +54,15 @@ public:
         asyncTask = std::async(std::launch::async, &Logger::processLogs, this);
     }
 
-    Logger(
-        const std::string &logFilePath,
-        const TimeFormat &timeFormat,
-        const long maxFileSize = MAX_LOG_FILE_SIZE,
-        const size_t bufferSize = DEFAULT_BUFFER_SIZE) : maxFileSize(maxFileSize), isRunning(true), bufferSize(bufferSize),  logFilePath(logFilePath), timeFormat(timeFormat)
+    Logger(const std::string &logFilePath) : Logger()
     {
-        user = getHostName();
-        writter = new std::fstream;
-        asyncTask = std::async(std::launch::async, &Logger::processLogs, this);
+        this->logFilePath = logFilePath;
         init();
+    }
+
+    Logger(const std::string &logFilePath, const TimeFormat &timeFormat) : Logger(logFilePath)
+    {
+        this->timeFormat = timeFormat;
     }
 
     ~Logger()
@@ -202,17 +200,26 @@ private:
 
     std::string getHostName()
     {
+#ifdef __linux__
         char hostname[256];
-
         if (gethostname(hostname, sizeof(hostname)) == 0)
         {
             hostname[strlen(hostname)] = '\0';
+            return std::string(hostname);
         }
+#elif _WIN32
+        DWORD size = UNLEN + 1; // UNLEN is the maximum length of a user name
+        TCHAR buffer[UNLEN + 1];
+        if (GetUserName(buffer, &size))
+        {
+            std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+            return converter.to_bytes(buffer);
+        }
+#endif
         else
         {
             return "unknown";
         }
-        return std::string(hostname);
     }
 
     std::string getCurrentTime()
@@ -229,7 +236,7 @@ private:
             strftime(current_time, sizeof(current_time), "%Y-%m-%dT%H:%M:%S", t);
             break;
         case TimeFormat::SYSLOG_FORMAT:
-            strftime(current_time, sizeof(current_time), "%a %b %e %H:%M:%S", t);
+            strftime(current_time, sizeof(current_time), "%a %b %d %H:%M:%S", t);
             break;
         default:
             strftime(current_time, sizeof(current_time), "%Y-%m-%d %H:%M:%S", t);
@@ -253,7 +260,8 @@ private:
             isRunning = true;
         }
     }
-    void processLogs()
+
+    /*void processLogs()
     {
         while (isRunning)
         {
@@ -278,6 +286,29 @@ private:
                 lock.lock();
             }
         }
+    }*/
+
+    void processLogs()
+    {
+        while (isRunning)
+        {
+            std::ostringstream stream;
+            std::unique_lock<std::mutex> lock(logMutex);
+
+            logCondition.wait(lock, [this]
+                              { return !logQueue.empty() || !isRunning || (logQueue.size() >= bufferSize); });
+
+            while (!logQueue.empty())
+            {
+                std::string message = logQueue.front();
+                logQueue.pop();
+                stream << message;
+            }
+
+            lock.unlock();
+            writter->write(stream.str().c_str(), stream.str().length());
+            lock.lock();
+        }
     }
 
 private:
@@ -294,6 +325,5 @@ private:
     std::future<void> asyncTask;
     std::queue<std::string> logQueue;
 };
-
 
 #endif
