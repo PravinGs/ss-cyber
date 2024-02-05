@@ -81,20 +81,6 @@ private:
     }
 
 private:
-    static int passwordCallback(char *buf, int size, int rwflag, void *u)
-    {
-        (void)rwflag;
-        (void)u;
-        const char *password = "Password";
-        size_t len = strlen(password);
-
-        if (len > static_cast<size_t>(size))
-            len = static_cast<size_t>(size);
-
-        memcpy(buf, password, len);
-        return static_cast<int>(len);
-    }
-
     std::string calculateHMAC(const std::string &data, const std::string &key)
     {
         unsigned char result[EVP_MAX_MD_SIZE];
@@ -115,36 +101,21 @@ private:
         return ss.str();
     }
 
-    bool signWithRSA(const char *inputFile, const char *privateKeyFile, const char *signatureFile)
+    bool signWithRSA(const char *inputFilePath, const char *signatureFilePath, const char *privateKeyFilePath, const char *privateKeyPassword)
     {
-        // Read private key
-        FILE *privateKeyFilePtr = fopen(privateKeyFile, "rb");
-        if (!privateKeyFilePtr)
-        {
-            perror("Error opening private key file");
-            return false;
-        }
 
-        RSA *privateKey = PEM_read_RSAPrivateKey(privateKeyFilePtr, nullptr, passwordCallback, nullptr);
-        fclose(privateKeyFilePtr);
+        std::string fileContent = readFileContent(inputFilePath);
+
+        if (fileContent.empty())
+            return false;
+
+        RSA *privateKey = readRSACertificate(false, privateKeyFilePath, privateKeyPassword);
 
         if (!privateKey)
         {
             ERR_print_errors_fp(stderr);
             return false;
         }
-
-        // Read file to sign
-        std::ifstream inputFileStream(inputFile, std::ios::binary);
-        if (!inputFileStream)
-        {
-            perror("Error opening input file");
-            RSA_free(privateKey);
-            return false;
-        }
-
-        std::string fileContent((std::istreambuf_iterator<char>(inputFileStream)), std::istreambuf_iterator<char>());
-        inputFileStream.close();
 
         // Calculate hash of the file
         unsigned char hash[SHA256_DIGEST_LENGTH];
@@ -162,35 +133,19 @@ private:
             return false;
         }
 
-        // Write the signature to a file
-        std::ofstream signatureFileStream(signatureFile, std::ios::binary);
-        if (!signatureFileStream)
-        {
-            perror("Error opening signature file");
-            RSA_free(privateKey);
-            return false;
-        }
-
-        signatureFileStream.write(reinterpret_cast<char *>(signature.get()), signatureLength);
-        signatureFileStream.close();
-
         RSA_free(privateKey);
 
-        return true;
+        return writeSignature(signatureFilePath, std::move(signature), signatureLength);
     }
 
-    bool verifySignatureWithRSA(const char *inputFile, const char *publicKeyFile, const char *signatureFile)
+    bool verifySignatureWithRSA(const char *inputFilePath, const char *signatureFilePath, const char *publicKeyFilePath)
     {
-        // Read public key
-        FILE *publicKeyFilePtr = fopen(publicKeyFile, "rb");
-        if (!publicKeyFilePtr)
-        {
-            perror("Error opening public key file");
-            return false;
-        }
+        std::string fileContent = readFileContent(inputFilePath);
 
-        RSA *publicKey = PEM_read_RSA_PUBKEY(publicKeyFilePtr, nullptr, nullptr, nullptr);
-        fclose(publicKeyFilePtr);
+        if (fileContent.empty())
+            return false;
+
+        RSA *publicKey = readRSACertificate(true, publicKeyFilePath);
 
         if (!publicKey)
         {
@@ -198,43 +153,17 @@ private:
             return false;
         }
 
-        // Read file content
-        std::ifstream inputFileStream(inputFile, std::ios::binary);
-        if (!inputFileStream)
-        {
-            perror("Error opening input file");
-            RSA_free(publicKey);
-            return false;
-        }
+        std::string signature = readFileContent(signatureFilePath);
 
-        std::string fileContent((std::istreambuf_iterator<char>(inputFileStream)), std::istreambuf_iterator<char>());
-        inputFileStream.close();
+        if (signature.empty())
+            return false;
 
         // Calculate hash of the file
         unsigned char hash[SHA256_DIGEST_LENGTH];
         SHA256(reinterpret_cast<const unsigned char *>(fileContent.c_str()), fileContent.length(), hash);
 
-        // Read the signature
-        std::ifstream signatureFileStream(signatureFile, std::ios::binary);
-        if (!signatureFileStream)
-        {
-            perror("Error opening signature file");
-            RSA_free(publicKey);
-            return false;
-        }
+        int verificationResult = RSA_verify(NID_sha256, hash, SHA256_DIGEST_LENGTH, reinterpret_cast<const unsigned char *>(signature.c_str()), signature.length(), publicKey);
 
-        signatureFileStream.seekg(0, std::ios::end);
-        int signatureLength = signatureFileStream.tellg();
-        signatureFileStream.seekg(0, std::ios::beg);
-
-        unsigned char *signature = new unsigned char[signatureLength];
-        signatureFileStream.read(reinterpret_cast<char *>(signature), signatureLength);
-        signatureFileStream.close();
-
-        // Verify the signature
-        int verificationResult = RSA_verify(NID_sha256, hash, SHA256_DIGEST_LENGTH, signature, signatureLength, publicKey);
-
-        delete[] signature;
         RSA_free(publicKey);
 
         return (verificationResult == 1);
@@ -415,9 +344,9 @@ private:
 public:
     CryptoHandler() {}
 
-    bool sign(const std::string &inputFile, const std::string &privateKeyFile, const std::string &signatureFile)
+    bool sign(const std::string &inputFile, const std::string &signatureFile, const std::string &privateKeyFile, const std::string &privateKeyPassword)
     {
-        return signWithRSA(inputFile.c_str(), privateKeyFile.c_str(), signatureFile.c_str());
+        return signWithRSA(inputFile.c_str(), signatureFile.c_str(), privateKeyFile.c_str(), privateKeyPassword.c_str());
     }
 
     bool verify(const std::string &inputFile, const std::string &publicKeyFile, const std::string &signatureFile)
