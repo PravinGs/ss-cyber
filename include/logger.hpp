@@ -2,14 +2,20 @@
 #define LOGGER_HPP
 
 #include "common.hpp"
-#define MAX_LOG_FILE_SIZE 10240
-#define DEFAULT_BUFFER_SIZE 10
+
+#define LOG_DEBUG 0
+#define LOG_INFO 1
+#define LOG_WARNING 2
+#define LOG_AUDIT 3
+#define LOG_ERROR 4
+#define LOG_CRITICAL 5
+#define LOG_FATAL 6
 
 #define LOG(logger, message, level) logger.log(message, level, __FILE__, __LINE__, __FUNCTION__)
 #define LOG2(logger, logModel) logger.log(logModel, __FILE__, __LINE__, __FUNCTION__)
 
 typedef struct LogModel LogModel;
-
+typedef struct LogBuilder LogBuilder;
 enum class TimeFormat
 {
     UTC_FORMAT,
@@ -17,53 +23,94 @@ enum class TimeFormat
     SYSLOG_FORMAT
 };
 
-enum class LogLevel
-{
-    INFO,
-    DEBUG,
-    WARNING,
-    AUDIT,
-    ERROR,
-    FATAL
-};
-
 struct LogModel
 {
     int lineNo;
     std::string user;
     std::string message;
-    LogLevel logLevel;
+    int logLevel;
     std::string fileName;
     std::string methodName;
 
     LogModel() : lineNo(__LINE__), fileName(__FILE__), methodName(__FUNCTION__) {}
-    LogModel(const std::string &message, const LogLevel &logLevel) : LogModel()
+    LogModel(const std::string &message, const int logLevel) : LogModel()
     {
         this->message = message;
         this->logLevel = logLevel;
     }
 };
 
+struct LogBuilder
+{
+    long maxFileSize;
+    std::string logFilePath;
+    int logRange;
+    int bufferSize;
+    bool rotateByDay;
+};
+
 class Logger
 {
 public:
-    Logger() : maxFileSize(MAX_LOG_FILE_SIZE), isRunning(false), bufferSize(DEFAULT_BUFFER_SIZE), timeFormat(TimeFormat::UTC_FORMAT)
+    static Logger &getInstance()
     {
-        user = getHostName();
-        writter = new std::fstream;
-        asyncTask = std::async(std::launch::async, &Logger::processLogs, this);
+        static Logger logger;
+        return logger;
     }
 
-    Logger(const std::string &logFilePath) : Logger()
+    static Logger &getInstance(const LogBuilder &logBuilder)
     {
-        this->logFilePath = logFilePath;
-        init();
+        Logger &logger = Logger::getInstance();
+        logger.maxFileSize = logBuilder.maxFileSize;
+        logger.logRange = logBuilder.logRange;
+        logger.logFilePath = logBuilder.logFilePath;
+        logger.bufferSize = logBuilder.bufferSize;
+        // logger.rotateByDay = logBuilder.rotateByDay;
+        return logger;
     }
 
-    Logger(const std::string &logFilePath, const TimeFormat &timeFormat) : Logger(logFilePath)
+    static Logger &getInstance(const std::string &logFilePath)
     {
-        this->timeFormat = timeFormat;
+        Logger &instance = getInstance();
+        instance.logFilePath = logFilePath;
+        instance.createWriter();
+        return instance;
     }
+
+    static Logger &getInstance(const std::string &logFilePath, const TimeFormat &timeFormat)
+    {
+        Logger &instance = getInstance();
+        instance.logFilePath = logFilePath;
+        instance.timeFormat = timeFormat;
+        instance.createWriter();
+        return instance;
+    }
+
+    // Logger() : logRange(0), maxFileSize(MAX_LOG_FILE_SIZE), isRunning(false), bufferSize(DEFAULT_BUFFER_SIZE), timeFormat(TimeFormat::UTC_FORMAT)
+    // {
+    //     init_logger();
+    // }
+
+    // Logger(const LogBuilder &logBuilder)
+    // {
+    //     this->maxFileSize = logBuilder.maxFileSize;
+    //     this->logRange = logBuilder.logRange;
+    //     this->logFilePath = logBuilder.logFilePath;
+    //     this->bufferSize = logBuilder.bufferSize;
+    //     this->rotateByDay = logBuilder.rotateByDay;
+    //     init_logger();
+    // }
+
+    // Logger(const std::string &logFilePath) : Logger()
+    // {
+    //     this->logFilePath = logFilePath;
+    //     createWriter();
+    // }
+
+    // Logger(const std::string &logFilePath, const TimeFormat &timeFormat) : Logger(logFilePath)
+    // {
+    //     this->timeFormat = timeFormat;
+    // }
 
     ~Logger()
     {
@@ -80,6 +127,11 @@ public:
         delete writter;
     }
 
+    void setLogRange(const int level)
+    {
+        this->logRange = level;
+    }
+
     void setTimeFormat(const TimeFormat &timeFormat)
     {
         this->timeFormat = timeFormat;
@@ -88,7 +140,7 @@ public:
     void setLogFilePath(const std::string &logFilePath)
     {
         this->logFilePath = logFilePath;
-        init();
+        createWriter();
     }
 
     void setFileSize(const long &fileSize)
@@ -107,7 +159,7 @@ public:
         return stream.str();
     }
 
-    std::string buildLog(const std::string &message, const LogLevel &logLevel, const std::string &user, const char *file, const int line, const char *funcName)
+    std::string buildLog(const std::string &message, const int logLevel, const std::string &user, const char *file, const int line, const char *funcName)
     {
         std::ostringstream stream;
         std::string level = getLogLevelString(logLevel);
@@ -134,15 +186,21 @@ public:
 
     void log(
         const std::string &message,
-        const LogLevel &level,
-        const char *file = __FILE__,
-        const int line = __LINE__,
-        const char *funcName = __FUNCTION__)
+        const int level,
+        const char *file = "__FILE__",
+        const int line = 0,
+        const char *funcName = "__FUNCTION__")
     {
+        if (logRange < level)
+        {
+            return;
+        }
         std::string logData = buildLog(message, level, this->user, file, line, funcName);
         std::unique_lock<std::mutex> lock(logMutex);
         {
+
             logQueue.push(logData);
+
             if (logQueue.size() >= bufferSize)
             {
                 logCondition.notify_one();
@@ -152,12 +210,16 @@ public:
 
     void log(
         const std::string &message,
-        const LogLevel &level,
+        const int level,
         const std::string &userName = "",
-        const char *file = __FILE__,
-        const int line = __LINE__,
-        const char *funcName = __FUNCTION__)
+        const char *file = "__FILE__",
+        const int line = 0,
+        const char *funcName = "__FUNCTION__")
     {
+        if (logRange < level)
+        {
+            return;
+        }
         std::string currentUser = (userName.empty()) ? this->user : userName;
         std::string logData = buildLog(message, level, currentUser, file, line, funcName);
         std::unique_lock<std::mutex> lock(logMutex);
@@ -171,24 +233,35 @@ public:
     }
 
 private:
-    std::string getLogLevelString(const LogLevel &logLevel)
+    Logger() : logRange(0), maxFileSize(MAX_LOG_FILE_SIZE), isRunning(false), bufferSize(DEFAULT_BUFFER_SIZE), timeFormat(TimeFormat::UTC_FORMAT)
+    {
+        init_logger();
+    }
+
+    Logger(const Logger &);
+    Logger &operator=(const Logger &);
+
+    std::string getLogLevelString(const int &logLevel)
     {
         std::string level;
         switch (logLevel)
         {
-        case LogLevel::WARNING:
+        case LOG_WARNING:
             level = "WARNING";
             break;
-        case LogLevel::INFO:
+        case LOG_INFO:
             level = "INFO";
             break;
-        case LogLevel::DEBUG:
+        case LOG_DEBUG:
             level = "DEBUG";
             break;
-        case LogLevel::AUDIT:
+        case LOG_AUDIT:
             level = "AUDIT";
             break;
-        case LogLevel::FATAL:
+        case LOG_CRITICAL:
+            level = "CRITICAL";
+            break;
+        case LOG_FATAL:
             level = "FATAL";
             break;
         default:
@@ -245,7 +318,14 @@ private:
         return current_time;
     }
 
-    void init()
+    void init_logger()
+    {
+        user = getHostName();
+        writter = new std::fstream;
+        asyncTask = std::async(std::launch::async, &Logger::processLogs, this);
+    }
+
+    void createWriter()
     {
         if (!writter->is_open())
         {
@@ -307,11 +387,147 @@ private:
 
             lock.unlock();
             writter->write(stream.str().c_str(), stream.str().length());
+#ifdef __linux__
+            backup_log_file();
+#endif
             lock.lock();
         }
     }
 
+#ifdef __linux__
+    void backup_log_file()
+    {
+        std::streampos size;
+        if (writter->is_open())
+        {
+            writter->seekg(0, std::ios::end);
+            size = writter->tellg();
+        }
+        std::cout << "BackUpCall()" << (long)size << '\n';
+        if (size >= maxFileSize)
+        {
+            std::cout << "Logfile size for backup : " << (long)size << '\n';
+            compress_file(logFilePath);
+            writter->close();
+            std::filesystem::remove(logFilePath);
+            writter->open(logFilePath, std::ios::app);
+        }
+    }
+
+    int get_regular_files(const std::string &directory, std::vector<std::string> &files)
+    {
+        int result = 1;
+        try
+        {
+            std::string parent = directory;
+            for (const auto &entry : std::filesystem::directory_iterator(directory))
+            {
+                if (std::filesystem::is_regular_file(entry.path()))
+                {
+                    std::string child = entry.path();
+                    files.push_back(child);
+                }
+            }
+        }
+        catch (std::exception &e)
+        {
+            result = -1;
+            std::string except = e.what();
+            std::cout << except << '\n';
+            // agent_utils::write_log("os: get_regular_files: " + except, FAILED);
+        }
+        return result;
+    }
+
+    int delete_file(const std::string &fileName)
+    {
+        if (std::filesystem::exists(fileName))
+        {
+            try
+            {
+                if (std::filesystem::remove(fileName))
+                {
+                    return 1;
+                }
+            }
+            catch (const std::exception &e)
+            {
+                std::string LOG_ERROR(e.what());
+                // agent_utils::write_log("os: delete_file: " + LOG_ERROR, FAILED);
+            }
+        }
+        return -1;
+    }
+
+    int compress_file(const std::string &log_file)
+    {
+        std::cout << "This thread is going to sleep for 10 secs\n";
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+        int result = 1;
+        std::string line;
+        std::string current_file = log_file;
+        std::string log_directory = current_file.substr(0, current_file.find_last_of('/'));
+        if (log_file == log_file)
+        {
+            std::vector<std::string> files;
+            get_regular_files(log_directory, files);
+            current_file += std::to_string(files.size());
+        }
+
+        if (current_file.size() == 0)
+        {
+            // agent_utils::write_log("agent_utils: compress_file: no global log file updated in the code for os", FAILED);
+            return -1;
+        }
+
+        std::fstream file(log_file, std::ios::in | std::ios::binary);
+        if (!file.is_open())
+        {
+            // agent_utils::write_log("agent_utils: compress_file: no file exist for backup ( " + log_file + " )", FAILED);
+            std::cerr << "no file exist for backup " << log_file << '\n';
+            return -1;
+        }
+        gzFile zLog;
+        std::string zipFile = current_file + ".gz";
+        zLog = gzopen(zipFile.c_str(), "w");
+        if (!zLog)
+        {
+            // agent_utils::write_log("agent_utils: compress_file: " + FCREATION_FAILED + zipFile, FAILED);
+            file.close();
+            return -1;
+        }
+
+        while (std::getline(file, line))
+        {
+            if (line.size() == 0)
+                continue;
+            line += '\n';
+            if (gzwrite(zLog, line.c_str(), static_cast<unsigned int>(line.size())) != (int)line.size())
+            {
+                // agent_utils::write_log("agent_utils: compress_file: " + FWRITE_FAILED + zipFile, FAILED);
+                result = -1;
+                break;
+            }
+        }
+        file.close();
+        gzclose(zLog);
+        if (result == 1)
+        {
+            delete_file(current_file);
+        }
+        else
+        {
+            // agent_utils::write_log("agent_utils: compress_file: " + FDELETE_FAILED + current_file, FAILED);
+            std::cerr << "Compress file failed\n";
+        }
+        return result;
+    }
+#endif
+
 private:
+    static const int MAX_LOG_FILE_SIZE = 102400;
+    static const int DEFAULT_BUFFER_SIZE = 100;
+    int logRange;
     long maxFileSize;
     bool isRunning;
     std::size_t bufferSize;

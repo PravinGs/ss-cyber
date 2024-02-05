@@ -3,7 +3,7 @@
 # Compiler and flags
 CXX := g++
 CXXFLAGS := -std=c++1z -Wall -Wextra -pedantic -fPIC
-LDFLAGS := -shared  -lssl -lcrypto
+LDFLAGS := -shared  -lssl -lcrypto -lz -lpthread
 LIB_DIR := /usr/local/lib
 INC_DIR := /usr/local/include
 

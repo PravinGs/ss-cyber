@@ -11,11 +11,13 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <Windows.h>
 #else
 #include <unistd.h>
+#include <zlib.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
 #include <openssl/bio.h>
