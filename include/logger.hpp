@@ -11,14 +11,12 @@ typedef struct LogBuilder LogBuilder;
 
 struct LogModel
 {
-    int lineNo;
+    int logLevel;
     std::string user;
     std::string message;
-    int logLevel;
-    std::string fileName;
-    std::string methodName;
 
-    LogModel() : lineNo(__LINE__), fileName(__FILE__), methodName(__FUNCTION__) {}
+    LogModel() : logLevel(0) {}
+
     LogModel(const std::string &message, const int logLevel) : LogModel()
     {
         this->message = message;
@@ -28,11 +26,13 @@ struct LogModel
 
 struct LogBuilder
 {
-    long maxFileSize;
-    std::string logFilePath;
+    int maxFileSizeMB;
     int logFilterLevel;
     int bufferSize;
     bool rotateByDay;
+    std::string logFilePath;
+    // LogWriter logWriter;
+    LogBuilder() : maxFileSizeMB(1), logFilterLevel(0), bufferSize(100), rotateByDay(0) {}
 };
 
 class Logger
@@ -47,7 +47,7 @@ public:
     static Logger &getInstance(const LogBuilder &logBuilder)
     {
         Logger &logger = Logger::getInstance();
-        logger.maxFileSize = logBuilder.maxFileSize;
+        logger.setFileSize(logBuilder.maxFileSizeMB);
         logger.logFilterLevel = logBuilder.logFilterLevel;
         logger.logFilePath = logBuilder.logFilePath;
         logger.bufferSize = logBuilder.bufferSize;
@@ -71,21 +71,6 @@ public:
         return instance;
     }
 
-    ~Logger()
-    {
-        isRunning = false;
-        logCondition.notify_one();
-        if (asyncTask.valid())
-        {
-            asyncTask.get();
-        }
-        if (writer->is_open())
-        {
-            writer->close();
-        }
-        delete writer;
-    }
-
     void setlogFilterLevel(const int level)
     {
         this->logFilterLevel = level;
@@ -102,37 +87,14 @@ public:
         initFileIOStream();
     }
 
-    void setFileSize(const long &fileSize)
+    void setFileSize(const int &fileSizeMB)
     {
-        this->maxFileSize = fileSize;
+        this->maxFileSize = logFileHandler.megabytesToBytes(fileSizeMB);
     }
 
-    std::string buildLog(const LogModel &logModel, const char *file, const int line, const char *funcName)
+    void log(const LogModel &logModel, const char *fileName = "", const int lineNo = 0, const char *methodName = "")
     {
-        std::ostringstream stream;
-        std::string level = getLogLevelString(logModel.logLevel);
-        stream << "[ " << OS::getCurrentTime(timeFormat) << " ]"
-               << " " << logModel.user << " "
-               << "[ " << file << ": " << line << "-" << funcName << " ] "
-               << " [" << level << "] " << logModel.message << '\n';
-        return stream.str();
-    }
-
-    std::string buildLog(const std::string &message, const int logLevel, const std::string &user, const char *file, const int line, const char *funcName)
-    {
-        std::ostringstream stream;
-        std::string level = getLogLevelString(logLevel);
-        stream << "[ " << OS::getCurrentTime(timeFormat) << " ]"
-               << " " << user << " "
-               << "[ " << file << ": " << line << "-" << funcName << " ] "
-               << " [" << level << "] " << message << '\n';
-
-        return stream.str();
-    }
-
-    void log(const LogModel &logModel, const char *file = __FILE__, const int line = __LINE__, const char *funcName = __FUNCTION__)
-    {
-        std::string message = buildLog(logModel, file, line, funcName);
+        std::string message = formatLog(logModel.message, logModel.logLevel, logModel.user, fileName, lineNo, methodName);
         std::unique_lock<std::mutex> lock(logMutex);
         {
             logQueue.push(message);
@@ -146,15 +108,15 @@ public:
     void log(
         const std::string &message,
         const int level,
-        const char *file = "__FILE__",
+        const char *file = "",
         const int line = 0,
-        const char *funcName = "__FUNCTION__")
+        const char *funcName = "")
     {
         if (logFilterLevel < level)
         {
             return;
         }
-        std::string logData = buildLog(message, level, this->user, file, line, funcName);
+        std::string logData = formatLog(message, level, this->user, file, line, funcName);
         std::unique_lock<std::mutex> lock(logMutex);
         {
 
@@ -171,18 +133,18 @@ public:
         const std::string &message,
         const int level,
         const std::string &userName = "",
-        const char *file = "__FILE__",
+        const char *file = "",
         const int line = 0,
-        const char *funcName = "__FUNCTION__")
+        const char *funcName = "")
     {
         if (logFilterLevel < level)
         {
             return;
         }
         std::string currentUser = (userName.empty()) ? this->user : userName;
-        std::string logData = buildLog(message, level, currentUser, file, line, funcName);
-        std::unique_lock<std::mutex> lock(logMutex);
+        std::string logData = formatLog(message, level, currentUser, file, line, funcName);
         {
+            std::unique_lock<std::mutex> lock(logMutex);
             logQueue.push(logData);
             if (logQueue.size() >= bufferSize)
             {
@@ -192,15 +154,38 @@ public:
     }
 
 private:
-    Logger() : logFilterLevel(0), maxFileSize(MAX_LOG_FILE_SIZE), isRunning(false), bufferSize(DEFAULT_BUFFER_SIZE), timeFormat(TimeFormat::UTC_FORMAT)
+    Logger() : logFilterLevel(0), maxFileSize(MAX_LOG_FILE_SIZE), isRunning(false), timeFormat(TimeFormat::UTC_FORMAT), bufferSize(DEFAULT_BUFFER_SIZE)
     {
-        initLogger();
+        maxFileSize = logFileHandler.megabytesToBytes(1);
+        start();
     }
 
     Logger(const Logger &);
     Logger &operator=(const Logger &);
 
-    std::string getLogLevelString(const int &logLevel)
+    ~Logger()
+    {
+        stop();
+        if (writer->is_open())
+        {
+            writer->close();
+        }
+        delete writer;
+    }
+
+    std::string formatLog(const std::string &message, const int logLevel, const std::string &user, const char *file, const int line, const char *funcName)
+    {
+        std::ostringstream stream;
+        std::string level = convertLogLevelToString(logLevel);
+        stream << "[ " << OS::getCurrentTime(timeFormat) << " ]"
+               << " " << user << " "
+               << "[ " << file << ": " << line << "-" << funcName << " ] "
+               << " [" << level << "] " << message << '\n';
+
+        return stream.str();
+    }
+
+    std::string convertLogLevelToString(const int &logLevel)
     {
         std::string level;
         switch (logLevel)
@@ -230,18 +215,30 @@ private:
         return level;
     }
 
-    void initLogger()
+    void start()
     {
         user = OS::getHostName();
         writer = new std::fstream;
-        asyncTask = std::async(std::launch::async, &Logger::processLogs, this);
+        logThread = std::thread(&Logger::processLogs, this);
+    }
+
+    void stop()
+    {
+        logCondition.notify_one(); // Notify the log thread to exit
+        isRunning = false;
+        if (logThread.joinable())
+            logThread.join(); // Wait for the log thread to finish
     }
 
     void initFileIOStream()
     {
+        if(!std::filesystem::exists(logFilePath))
+        {
+            return ;
+        }
         if (!writer->is_open())
         {
-            writer->open(logFilePath, std::ios::binary | std::ios::app);
+            writer->open(logFilePath, std::ios::app);
             if (writer->is_open())
             {
                 isRunning = true;
@@ -255,66 +252,72 @@ private:
 
     void processLogs()
     {
+        std::cout << "Process Logs called: with the size of: " << (int)logQueue.size() << '\n';
         while (isRunning)
         {
             std::ostringstream stream;
-            std::unique_lock<std::mutex> lock(logMutex);
-
-            logCondition.wait(lock, [this]
-                              { return !logQueue.empty() || !isRunning || (logQueue.size() >= bufferSize); });
-
-            while (!logQueue.empty())
             {
-                std::string message = logQueue.front();
-                logQueue.pop();
-                stream << message;
-            }
+                std::unique_lock<std::mutex> lock(logMutex);
 
-            lock.unlock();
-            writer->write(stream.str().c_str(), stream.str().length());
-#ifdef __linux__
-            backup_log_file();
-#endif
-            lock.lock();
+                logCondition.wait(lock, [this]
+                                  { return !logQueue.empty() || !isRunning || (logQueue.size() >= bufferSize); });
+
+                while (!logQueue.empty())
+                {
+                    std::string message = logQueue.front();
+                    logQueue.pop();
+                    stream << message;
+                }
+            } // Realse lock to write file
+
+            {
+                std::lock_guard<std::mutex> lock(logMutex);
+                writer->write(stream.str().c_str(), stream.str().length());
+                backupLogFile(logFilePath);
+            }
         }
     }
 
-    void backup_log_file()
+    void backupLogFile(const std::string &fileName)
     {
-        std::streampos size;
-        if (writer->is_open())
+        if (!std::filesystem::exists(fileName))
         {
-            writer->seekg(0, std::ios::end);
-            size = writer->tellg();
+            std::string error = "file not exist " + fileName;
+            log(error, LOG_ERROR, __FILE__, __LINE__, __FUNCTION__);
+            return;
         }
-        // std::cout << "BackUpCall()" << (long)size << '\n';
-        if (size >= maxFileSize)
+
+        std::uintmax_t fileSize = std::filesystem::file_size(fileName);
+        if (fileSize >= maxFileSize)
         {
-            // std::cout << "Logfile size for backup : " << (long)size << '\n';
-            logFileHandler.compress_file(logFilePath);
             writer->close();
-            std::filesystem::remove(logFilePath);
-            writer->open(logFilePath, std::ios::app);
+            logFileHandler.compress_file(fileName);
+            writer->open(fileName, std::ios::trunc | std::ios::app);
         }
     }
 
 private:
     LogFileHandler logFileHandler;
-    static const int MAX_LOG_FILE_SIZE = 102400;
+    static const int MAX_LOG_FILE_SIZE = 1;
     static const int DEFAULT_BUFFER_SIZE = 100;
+
     int logFilterLevel;
-    long maxFileSize;
+    std::uintmax_t maxFileSize;
     bool isRunning;
-    std::size_t bufferSize;
     std::string logFilePath;
     std::fstream *writer = nullptr;
+
+    // Global vlaues to this Logger instance
     TimeFormat timeFormat;
     std::string user;
+
+    // Non blocking logger
     std::mutex logMutex;
     std::condition_variable logCondition;
-    // std::thread logThread;
-    std::future<void> asyncTask;
+    // std::future<void> asyncTask;
+    std::thread logThread;
     std::queue<std::string> logQueue;
+    std::size_t bufferSize;
 };
 
 #endif

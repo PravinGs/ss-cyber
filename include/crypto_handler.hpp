@@ -4,7 +4,6 @@
 
 class CryptoHandler
 {
-
 private:
     std::string readFileContent(const std::string &filePath)
     {
@@ -344,12 +343,22 @@ private:
 public:
     CryptoHandler() {}
 
-    bool sign(const std::string &inputFile, const std::string &signatureFile, const std::string &privateKeyFile, const std::string &privateKeyPassword)
+    bool signRSA(const std::string &inputFile, const std::string &signatureFile, const std::string &privateKeyFile, const std::string &privateKeyPassword)
     {
         return signWithRSA(inputFile.c_str(), signatureFile.c_str(), privateKeyFile.c_str(), privateKeyPassword.c_str());
     }
 
-    bool verify(const std::string &inputFile, const std::string &publicKeyFile, const std::string &signatureFile)
+    bool verifyRSA(const std::string &inputFile, const std::string &publicKeyFile, const std::string &signatureFile)
+    {
+        return verifySignatureWithRSA(inputFile.c_str(), publicKeyFile.c_str(), signatureFile.c_str());
+    }
+
+    bool signECDSA(const std::string &inputFile, const std::string &signatureFile, const std::string &privateKeyFile, const std::string &privateKeyPassword)
+    {
+        return signWithECDSA(inputFile, signatureFile, privateKeyFile, privateKeyPassword);
+    }
+
+    bool verifyECDSA(const std::string &inputFile, const std::string &publicKeyFile, const std::string &signatureFile)
     {
         return verifySignatureWithRSA(inputFile.c_str(), publicKeyFile.c_str(), signatureFile.c_str());
     }

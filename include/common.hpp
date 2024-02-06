@@ -12,12 +12,12 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+#include <zlib.h>
 
 #ifdef _WIN32
 #include <Windows.h>
 #else
 #include <unistd.h>
-#include <zlib.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
 #include <openssl/bio.h>
@@ -27,7 +27,6 @@
 #include <openssl/pem.h>
 #include <openssl/err.h>
 #endif
-
 
 #define LOG_DEBUG 0
 #define LOG_INFO 1
@@ -55,6 +54,13 @@ enum class TimeFormat
     UTC_FORMAT,
     ISO_8601,
     SYSLOG_FORMAT
+};
+
+enum class LogWriter
+{
+    FILE,
+    CONSOLE,
+    DATABASE
 };
 
 class OS
